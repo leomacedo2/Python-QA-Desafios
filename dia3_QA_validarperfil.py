@@ -23,7 +23,7 @@ usuario_menor_idade = {
     "email": 'naotememail@gmail.com',
     "status_ativo": True
 }
-# sandbox
+
 # 2. O comando ASSERT em ação!
 # Ele diz: "Python, eu AFIRMO que se eu jogar o usuario_caminho_feliz na função, o resultado tem que ser True. Se não for, quebre o programa!"
 assert validar_acesso(usuario_caminho_feliz) == True
