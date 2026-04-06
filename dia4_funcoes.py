@@ -13,5 +13,7 @@ def validar_forca_senha(senha):
         return False
 
 
-print(validar_forca_senha("senha123"))
-print(validar_forca_senha("Forte@2026"))
+# Uma tecnica para que esses prints só rodem se for este arquivo a ser executado.
+if __name__ == "__main__":
+    print(validar_forca_senha("senha123"))
+    print(validar_forca_senha("Forte@2026"))
