@@ -8,6 +8,6 @@ Este repositório documenta o meu percurso de aprendizagem em Python, com foco e
 - [x] **Dia 2:** Listas e Laços (Verificador de Força de Senhas)
 - [x] **Dia 3:** Dicionários (Validação de Perfil de Utilizador)
 - [x] **Dia 4:** Funções (Criar Ferramentas Reutilizáveis)
-- [ ] **Dia 5:** Módulos Nativos (Gerador de Dados de Teste Aleatórios)
+- [x] **Dia 5:** Módulos Nativos (Gerador de Dados de Teste Aleatórios)
 
 ---
