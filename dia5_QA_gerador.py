@@ -1,7 +1,6 @@
-# Código para treinar teste de aleatoriedade.
+# Código para treinar teste de aleatoriedade
 
 from dia5_gerador_dados import gerar_email_fake
-
 import re
 
 padrao_email = r"^[a-z]+[0-9]{4}@testeqa\.com$"
