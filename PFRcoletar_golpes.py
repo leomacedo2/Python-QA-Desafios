@@ -149,6 +149,6 @@ def gerar_planilha_horizontal():
     nome_arquivo = 'Golpes_Familias_FRLG.xlsx'
     wb.save(nome_arquivo)
     print(f"\n🎉 SUCESSO! Arquivo '{nome_arquivo}' gerado exatamente no formato solicitado!")
-
+#sandbox
 if __name__ == "__main__":
     gerar_planilha_horizontal()
