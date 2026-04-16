@@ -3,7 +3,7 @@ import pandas as pd
 import time
 
 # =====================================================================
-# REGRAS DO UNIVERSAL POKEMON RANDOMIZER
+# REGRAS DO UNIVERSAL POKEMON RANDOMIZER (HGSS / GEN 4)
 # =====================================================================
 MUDANCAS_RANDOMIZER = {
     "Politoed": {"metodo": "Segurando Rei do Rock", "lvl": None},
@@ -68,7 +68,6 @@ def extrair_golpes_hgss(pid):
     dados = obter_dados(f"https://pokeapi.co/api/v2/pokemon/{pid}")
     golpes = {}
     lvl_maximo = 0
-    # Usamos um set para contar golpes únicos no lvl 1 sem repetições da API
     golpes_lvl1_brutos = set()
     
     if dados:
@@ -78,11 +77,11 @@ def extrair_golpes_hgss(pid):
                 if detalhe['version_group']['name'] == 'heartgold-soulsilver' and detalhe['move_learn_method']['name'] == 'level-up':
                     lvl = detalhe['level_learned_at']
                     if lvl > 0:
-                        # REGISTRA PARA O AVISO (Antes da conversão/filtragem de maior level)
+                        # REGISTRA PARA O AVISO DE LEVEL 1
                         if lvl == 1:
                             golpes_lvl1_brutos.add(nome_golpe)
                             
-                        # MANTÉM A CONVERSÃO (Filtragem para a planilha: maior level ganha)
+                        # FILTRAGEM: mantém o maior level em que o golpe é aprendido
                         if nome_golpe not in golpes or lvl > golpes[nome_golpe]:
                             golpes[nome_golpe] = lvl
                         if lvl > lvl_maximo:
@@ -120,7 +119,7 @@ def principal():
 
     add_linha(["ID", "Pokemon", "Lvl", "Atividade", "Golpe&Itens", "OBS"])
     
-    print("Iniciando mapeamento...")
+    print("Iniciando mapeamento HGSS...")
     
     for i in ids_para_testar:
         if i in familias_processadas:
@@ -148,7 +147,6 @@ def principal():
                 
                 if pid > 493: continue
                 
-                # CORREÇÃO: Gerando ID como número (float) para o Excel não reclamar
                 novo_id_formatado = float(f"{min_id_familia}.{idx}")
                 
                 min_lvl = None
@@ -177,7 +175,6 @@ def principal():
                     else:
                         metodo_str = "Nasce de Ovo / Misterioso"
                 
-                # Agora recebemos a contagem real de golpes de nível 1
                 golpes, lvl_max, qtd_lvl1_real = extrair_golpes_hgss(pid)
                 
                 linha_evolutiva.append({
@@ -198,10 +195,25 @@ def principal():
                     obs = f"Evolui para {prox['nome']}"
                     add_linha([membro['id'], membro['nome'], lvl_evolucao, "Evoluir", prox['metodo_str'], obs])
 
-                # AGORA O AVISO USA A CONTAGEM REAL (Antes da filtragem de level)
+                # 1º AVISO: Múltiplos golpes no nível 1 (Manteve sua regra anterior)
                 if membro['qtd_lvl1_real'] >= 5:
                     add_linha([membro['id'], membro['nome'], 1, "Aviso", "Muitos golpes base", f"Atenção: Aprende {membro['qtd_lvl1_real']} golpes no level 1!"])
 
+                # 2º AVISO (NOVO): Golpes simultâneos no mesmo level (> 1)
+                golpes_por_nivel = {}
+                for nome_golpe, lvl_golpe in membro['golpes'].items():
+                    if lvl_golpe > 1: # Ignora o level 1 conforme você pediu
+                        if lvl_golpe not in golpes_por_nivel:
+                            golpes_por_nivel[lvl_golpe] = []
+                        golpes_por_nivel[lvl_golpe].append(nome_golpe)
+                
+                for lvl, moves_no_nivel in golpes_por_nivel.items():
+                    if len(moves_no_nivel) > 1:
+                        moves_formatados = ", ".join(moves_no_nivel)
+                        obs = f"Aprende {len(moves_no_nivel)} golpes simultâneos: {moves_formatados}"
+                        add_linha([membro['id'], membro['nome'], lvl, "Aviso", "Múltiplos Golpes", obs])
+
+                # Mapeia cada golpe e verifica se os parentes não aprendem
                 for nome_golpe, lvl_golpe in membro['golpes'].items():
                     parentes_que_nao_aprendem = []
                     
@@ -224,7 +236,7 @@ def principal():
     nome_arquivo = 'pokemon_randomizer_com_golpes.xlsx'
     df.to_excel(nome_arquivo, index=False)
         
-    print(f"Concluído! Arquivo '{nome_arquivo}' criado. IDs agora são números e Blastoise terá seu aviso!")
+    print(f"Concluído! Arquivo '{nome_arquivo}' criado com os avisos de múltiplos golpes incluídos!")
 
 if __name__ == "__main__":
     principal()
