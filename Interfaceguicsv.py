@@ -3,6 +3,7 @@ from tkinter import ttk, messagebox, filedialog, simpledialog
 import pandas as pd
 import os
 import json
+import copy
 
 class PokemonEditor:
     def __init__(self, root):
@@ -13,15 +14,53 @@ class PokemonEditor:
         self.pokemon_atual = None
         self.move_copia_atual = None 
         self.completed_set = set()
+        self.favorites_set = set()
+        self.arquivo_favoritos = None 
+        self.historico_undo = []
+        self.historico_redo = []
         
-        self.root.title("PokeMove Editor - Ultra Rápido")
+        self.root.title("PokeMove Editor")
         self.root.geometry("1150x750")
+
+        # --- BARRA DE FERRAMENTAS SUPERIOR (CABEÇALHO) ---
+        self.toolbar_frame = ttk.Frame(root)
+        self.toolbar_frame.pack(side="top", fill="x", padx=10, pady=5)
+
+        self.btn_undo = ttk.Button(self.toolbar_frame, text="↩️ Desfazer", state=tk.DISABLED, command=self.executar_ctrl_z)
+        self.btn_undo.pack(side="left", padx=2)
+
+        self.btn_redo = ttk.Button(self.toolbar_frame, text="↪️ Refazer", state=tk.DISABLED, command=self.executar_ctrl_y)
+        self.btn_redo.pack(side="left", padx=2)
 
         # --- ATALHOS DE TECLADO ---
         self.root.bind('<Control-s>', lambda e: self.exportar_final())
-        self.root.bind('<Control-q>', lambda e: self.add_blank_move())
+        self.root.bind('<Control-w>', lambda e: self.add_blank_move())
         self.root.bind('<Control-d>', lambda e: self.organizar_visual())
+        self.root.bind('<Control-f>', lambda e: self.ent_search.focus_set())
         self.root.bind('<Control-a>', self.toggle_completed_atalho)
+        self.root.bind('<Control-q>', self.toggle_favorite_atalho)
+
+        # --- SISTEMA UNDO / REDO ---
+        self.root.bind('<Control-z>', self.executar_ctrl_z)
+        self.root.bind('<Control-y>', self.executar_ctrl_y)
+
+        # --- ATALHOS DO TECLADO NUMÉRICO (NUMPAD) ---
+        # self.root.bind('<Control-Up>', lambda e: self.organizar_visual())
+        #self.root.bind('<Control-Up>', lambda e: self.organizar_visual()) 
+        #self.root.bind('<Control-Down>', lambda e: self.lb_pkmn.focus_set())
+        self.root.bind('<Control-Up>', lambda e: self.navegar_leveis(-1)) 
+        self.root.bind('<Control-Down>', lambda e: self.navegar_leveis(1))
+        self.root.bind('<Control-Left>', lambda e: self.lb_pkmn.focus_set())
+        self.root.bind('<Control-Right>', lambda e: self.organizar_visual())
+        #self.root.bind('<Control-Left>', lambda e: self.navegar_leveis(-1))
+        #self.root.bind('<Control-Right>', lambda e: self.navegar_leveis(1))
+        # self.root.bind('<Control-Right>', self.navegar_campos_edicao)
+        self.root.bind('<Control-Key-1>', self.toggle_favorite_atalho)           # Ctrl + Numpad 1 (Favoritar)
+        self.root.bind('<Control-Key-2>', self.toggle_completed_atalho)          # Ctrl + Numpad 2 (Concluir)
+        self.root.bind('<Control-Key-3>', lambda e: self.ent_search.focus_set()) # Ctrl + Numpad 3 (Buscar)
+        self.root.bind('<Control-Key-5>', lambda e: self.iniciar_copia_todos())  # Ctrl + Numpad 5 (Copiar Todos)
+        self.root.bind('<Control-Key-0>', lambda e: self.exportar_final())       # Ctrl + Numpad 0 (Salvar Tudo)
+
 
         # --- MENU SUPERIOR ---
         self.menu_bar = tk.Menu(root)
@@ -44,7 +83,7 @@ class PokemonEditor:
         ttk.Label(self.frame_lista, text="Filtro de Status:").pack()
         self.filter_status_var = tk.StringVar(value="Mostrar todos")
         self.combo_filter = ttk.Combobox(self.frame_lista, textvariable=self.filter_status_var, 
-                                         values=["Mostrar todos", "Mostrar completos", "Mostrar incompletos"], state="readonly")
+                                         values=["Mostrar todos", "Mostrar completos", "Mostrar incompletos", "Favoritos"], state="readonly")
         self.combo_filter.pack(fill="x", pady=(0, 5))
         self.combo_filter.bind("<<ComboboxSelected>>", self.filtrar_lista)
 
@@ -58,6 +97,10 @@ class PokemonEditor:
         self.lb_pkmn.pack(expand=True, fill="both")
         self.lb_pkmn.bind('<<ListboxSelect>>', self.trocar_pokemon)
 
+        # --- TRAVA PARA A LISTBOX NÃO PULAR POKÉMON COM O CTRL ---
+        self.lb_pkmn.bind('<Control-Up>', lambda e: self.navegar_leveis(-1))
+        self.lb_pkmn.bind('<Control-Down>', lambda e: self.navegar_leveis(1))
+
         # --- FRAME 3: LISTA ALVO PARA COPIAR (Direita) ---
         self.frame_alvo = ttk.Frame(self.main_frame)
         
@@ -67,7 +110,7 @@ class PokemonEditor:
         # ---> CÓDIGO NOVO: Filtro de Status para a coluna alvo <---
         ttk.Label(self.frame_alvo, text="Filtro de Status:").pack()
         self.filter_alvo_status_var = tk.StringVar(value="Mostrar todos")
-        self.combo_filter_alvo = ttk.Combobox(self.frame_alvo, textvariable=self.filter_alvo_status_var, values=["Mostrar todos", "Mostrar completos", "Mostrar incompletos"], state="readonly")
+        self.combo_filter_alvo = ttk.Combobox(self.frame_alvo, textvariable=self.filter_alvo_status_var, values=["Mostrar todos", "Mostrar completos", "Mostrar incompletos", "Favoritos"], state="readonly")
         self.combo_filter_alvo.pack(fill="x", pady=(0, 5))
         self.combo_filter_alvo.bind("<<ComboboxSelected>>", self.filtrar_lista_alvo)
         # ----------------------------------------------------------
@@ -96,7 +139,10 @@ class PokemonEditor:
         self.chk_completed = tk.Checkbutton(self.frame_edit, text="✅ Marcar como Concluído", 
                                             variable=self.is_completed_var, command=self.toggle_completed,
                                             font=("Arial", 10, "bold"), fg="green")
-        
+        self.is_favorite_var = tk.BooleanVar()
+        self.chk_favorite = tk.Checkbutton(self.frame_edit, text="⭐ Favoritar", 
+                                            variable=self.is_favorite_var, command=self.toggle_favorite,
+                                            font=("Arial", 10, "bold"), fg="#FF8C00") # Laranja escuro
         self.canvas = tk.Canvas(self.frame_edit)
         self.scrollbar = ttk.Scrollbar(self.frame_edit, orient="vertical", command=self.canvas.yview)
         self.scroll_frame = ttk.Frame(self.canvas)
@@ -114,16 +160,29 @@ class PokemonEditor:
         self.lbl_aviso_limite.pack(side="left", padx=5)
 
         ttk.Button(self.bottom_edit_frame, text="📑 Copiar TODOS os Golpes", 
-                   command=self.iniciar_copia_todos).pack(side="right", padx=5)
+                   command=self.iniciar_copia_todos).pack(side="left", padx=5)
 
         # --- BOTÕES INFERIORES GERAIS ---
         self.btn_frame = ttk.Frame(root)
         ttk.Button(self.btn_frame, text="➕ Add Golpe (Ctrl+Q)", command=self.add_blank_move).pack(side="left", padx=10)
         ttk.Button(self.btn_frame, text="⚡ Ordenar (Ctrl+D)", command=self.organizar_visual).pack(side="left", padx=10)
-        ttk.Button(self.btn_frame, text="💾 SALVAR TUDO (Ctrl+S)", command=self.exportar_final).pack(side="right", padx=10)
+        ttk.Button(self.btn_frame, text="💾 SALVAR TUDO (Ctrl+S)", command=self.exportar_final).pack(side="left", padx=10)
 
         self.lbl_status = ttk.Label(root, text="Atalhos: Ctrl+S (Salvar) | Ctrl+Q (Add Golpe) | Ctrl+A (Concluir) | Ctrl+D (Ordenar)", foreground="blue")
         self.lbl_status.pack(side="bottom", pady=5)
+
+    def atualizar_estado_botoes_historico(self):
+        # Se tem algo no passado, acende o botão Desfazer
+        if len(self.historico_undo) > 0:
+            self.btn_undo.config(state=tk.NORMAL)
+        else:
+            self.btn_undo.config(state=tk.DISABLED)
+            
+        # Se tem algo no futuro, acende o botão Refazer
+        if len(self.historico_redo) > 0:
+            self.btn_redo.config(state=tk.NORMAL)
+        else:
+            self.btn_redo.config(state=tk.DISABLED)
 
     def selecionar_arquivo(self):
         caminho = filedialog.askopenfilename(filetypes=[("Arquivos CSV", "*.csv")])
@@ -142,6 +201,14 @@ class PokemonEditor:
                             self.completed_set = set(json.load(f))
                     except:
                         pass
+                
+                self.arquivo_favoritos = self.caminho_arquivo.replace('.csv', '_favoritos.json')
+                self.favorites_set = set()
+                if os.path.exists(self.arquivo_favoritos):
+                    try:
+                        with open(self.arquivo_favoritos, 'r', encoding='utf-8') as f:
+                            self.favorites_set = set(json.load(f))
+                    except: pass
 
                 self.main_frame.pack(fill="both", expand=True)
                 self.btn_frame.pack(fill="x", side="bottom", pady=10)
@@ -150,6 +217,10 @@ class PokemonEditor:
                 messagebox.showinfo("Sucesso", "Arquivo carregado!")
             except Exception as e:
                 messagebox.showerror("Erro", f"Não foi possível ler o arquivo:\n{e}")
+
+                self.historico_undo.clear()
+                self.historico_redo.clear()
+                self.atualizar_estado_botoes_historico()
 
     def carregar_lista_nomes(self):
         self.lista_formatada = []
@@ -170,13 +241,16 @@ class PokemonEditor:
         for item in self.lista_formatada:
             pname = item.split(" - ", 1)[1]
             is_completed = pname in self.completed_set
+            is_favorite = pname in self.favorites_set
             
-            if status_filtro == "Mostrar completos" and not is_completed:
-                continue
-            if status_filtro == "Mostrar incompletos" and is_completed:
-                continue
+            if status_filtro == "Mostrar completos" and not is_completed: continue
+            if status_filtro == "Mostrar incompletos" and is_completed: continue
+            if status_filtro == "Favoritos" and not is_favorite: continue
                 
-            prefix = "✅ " if is_completed else ""
+            # Monta os ícones do lado do nome
+            prefix = ""
+            if is_favorite: prefix += "⭐ "
+            if is_completed: prefix += "✅ "
             
             if search in item.upper():
                 self.lb_pkmn.insert(tk.END, prefix + item)
@@ -190,15 +264,16 @@ class PokemonEditor:
         for item in self.lista_formatada:
             pname = item.split(" - ", 1)[1]
             is_completed = pname in self.completed_set
+            is_favorite = pname in self.favorites_set
+
+            if status_filtro == "Mostrar completos" and not is_completed: continue
+            if status_filtro == "Mostrar incompletos" and is_completed: continue
+            if status_filtro == "Favoritos" and not is_favorite: continue
             
-            # ---> CÓDIGO NOVO: Aplica a lógica do filtro de status <---
-            if status_filtro == "Mostrar completos" and not is_completed:
-                continue
-            if status_filtro == "Mostrar incompletos" and is_completed:
-                continue
-            # ----------------------------------------------------------
-            
-            prefix = "✅ " if is_completed else ""
+            # Monta os ícones do lado do nome
+            prefix = ""
+            if is_favorite: prefix += "⭐ "
+            if is_completed: prefix += "✅ "
             
             if search in item.upper():
                 self.lb_alvo.insert(tk.END, prefix + item)
@@ -207,7 +282,7 @@ class PokemonEditor:
         if not self.pokemon_atual: return
         itens = self.lb_pkmn.get(0, tk.END)
         for i, item in enumerate(itens):
-            nome = item.replace("✅ ", "").split(" - ", 1)[1]
+            nome = item.replace("✅ ", "").replace("⭐ ", "").split(" - ", 1)[1]
             if nome == self.pokemon_atual:
                 self.lb_pkmn.selection_clear(0, tk.END)
                 self.lb_pkmn.selection_set(i)
@@ -236,6 +311,95 @@ class PokemonEditor:
         self.filtrar_lista_alvo()
         self.restaurar_selecao_lista()
         self.lb_pkmn.focus_set()
+
+    def toggle_favorite_atalho(self, event=None):
+        if not self.pokemon_atual: return
+        self.is_favorite_var.set(not self.is_favorite_var.get())
+        self.toggle_favorite()
+
+    def toggle_favorite(self):
+        if not self.pokemon_atual: return
+        
+        if self.is_favorite_var.get():
+            self.favorites_set.add(self.pokemon_atual)
+        else:
+            self.favorites_set.discard(self.pokemon_atual)
+            
+        if self.arquivo_favoritos:
+            with open(self.arquivo_favoritos, 'w', encoding='utf-8') as f:
+                json.dump(list(self.favorites_set), f)
+                
+        self.filtrar_lista()
+        if hasattr(self, 'filtrar_lista_alvo'): # Para a lista do alvo, se houver
+            self.filtrar_lista_alvo()
+        self.restaurar_selecao_lista()
+        self.lb_pkmn.focus_set()
+    
+    def obter_campos_edicao(self, container):
+        campos = []
+        for child in container.winfo_children():
+            # Adicionei tk.Spinbox e ttk.Spinbox caso seus levels usem isso
+            if isinstance(child, (tk.Entry, ttk.Entry, ttk.Combobox, tk.Spinbox, ttk.Spinbox)):
+                try:
+                    if str(child.cget('state')) != 'disabled':
+                        campos.append(child)
+                except:
+                    campos.append(child)
+            campos.extend(self.obter_campos_edicao(child))
+        return campos
+    
+    def focar_primeiro_campo(self, event=None):
+        campos = self.obter_campos_edicao(self.frame_edit)
+        if campos:
+            # O "Pulo do Gato": Ordena fisicamente pela posição na tela (Y: cima pra baixo, X: esq pra dir)
+            campos.sort(key=lambda w: (w.winfo_rooty(), w.winfo_rootx()))
+            
+            campos[0].focus_set()
+            try:
+                campos[0].select_range(0, tk.END)
+            except: pass
+        return "break"
+
+    def obter_spinboxes_leveis(self, container):
+        campos = []
+        for child in container.winfo_children():
+            # Filtra APENAS Spinbox (ignorando os Combobox e Entry dos ataques)
+            if isinstance(child, (tk.Spinbox, ttk.Spinbox)):
+                try:
+                    if str(child.cget('state')) != 'disabled':
+                        campos.append(child)
+                except:
+                    campos.append(child)
+            campos.extend(self.obter_spinboxes_leveis(child))
+        return campos
+
+    def navegar_leveis(self, direcao, event=None):
+        # "direcao" será 1 (para baixo) ou -1 (para cima)
+        campos = self.obter_spinboxes_leveis(self.frame_edit)
+        if not campos: return "break"
+
+        # Ordena geometricamente para respeitar a tela (cima pra baixo)
+        campos.sort(key=lambda w: (w.winfo_rooty(), w.winfo_rootx()))
+
+        foco_atual = self.root.focus_get()
+
+        if foco_atual in campos:
+            indice_atual = campos.index(foco_atual)
+            # A mágica da matemática: se for -1 e estiver no topo, ele vai pro final da lista!
+            proximo_indice = (indice_atual + direcao) % len(campos)
+            campos[proximo_indice].focus_set()
+            
+            try:
+                campos[proximo_indice].select_range(0, tk.END)
+            except: pass
+        else:
+            # O "Else" que você pediu de volta: Se não estiver num Level, pula pro 1º Level!
+            campos[0].focus_set()
+            try:
+                campos[0].select_range(0, tk.END)
+            except: pass
+            
+        return "break"
 
     def salvar_em_memoria(self):
         if self.df_original is None or self.pokemon_atual is None:
@@ -285,7 +449,7 @@ class PokemonEditor:
             self.salvar_em_memoria()
             
         selecionado = self.lb_pkmn.get(self.lb_pkmn.curselection())
-        selecionado = selecionado.replace("✅ ", "") 
+        selecionado = selecionado.replace("✅ ", "").replace("⭐ ", "") 
         nome = selecionado.split(" - ", 1)[1]
         
         self.pokemon_atual = nome
@@ -293,6 +457,9 @@ class PokemonEditor:
         
         self.chk_completed.pack(pady=(0, 10))
         self.is_completed_var.set(nome in self.completed_set)
+
+        self.chk_favorite.pack(pady=(0, 10))
+        self.is_favorite_var.set(nome in self.favorites_set)
         
         for widget in self.scroll_frame.winfo_children():
             widget.destroy()
@@ -306,6 +473,26 @@ class PokemonEditor:
                 
         self.esconder_painel_copia()
         self.atualizar_contador_golpes()
+
+    def recarregar_ui_atual(self):
+        # Se não tiver nenhum Pokémon selecionado, não faz nada
+        if not self.pokemon_atual: return
+        
+        # Limpa todos os golpes da tela
+        for widget in self.scroll_frame.winfo_children():
+            widget.destroy()
+
+        # Puxa os dados da "máquina do tempo" (do DataFrame) e recria as linhas
+        linha = self.df_original[self.df_original['Name'] == self.pokemon_atual].iloc[0]
+        for i in range(2, len(self.df_original.columns), 2):
+            move = linha.iloc[i]
+            lvl = linha.iloc[i+1]
+            if move != '0' and move != 0 and pd.notna(move):
+                self.criar_linha_ui(move, lvl)
+                
+        # Atualiza os visuais
+        self.atualizar_contador_golpes()
+        self.destacar_duplicatas()
 
     def destacar_duplicatas(self, *args):
         level_entries = []
@@ -349,10 +536,35 @@ class PokemonEditor:
                 m_entry.config(bg="white")
 
     def deletar_golpe(self, frame):
+        self.salvar_estado_para_desfazer()
         frame.destroy()
         self.root.after(10, self.destacar_duplicatas)
         self.root.after(10, self.atualizar_contador_golpes)
         self.lb_pkmn.focus_set()
+
+    def alterar_valor_spinbox(self, widget, incremento, event=None):
+        self.salvar_estado_para_desfazer()
+        try:
+            # Pega o texto atual e transforma em número
+            valor_atual = int(widget.get())
+            novo_valor = valor_atual + incremento
+            
+            # Trava nos limites lógicos (0 a 100)
+            if novo_valor > 100: novo_valor = 100
+            if novo_valor < 0: novo_valor = 0
+            
+            # Apaga o antigo e insere o novo
+            widget.delete(0, tk.END)
+            widget.insert(0, str(novo_valor))
+            
+            # Atualiza o visual de duplicatas, já que o número mudou
+            self.destacar_duplicatas()
+            
+        except ValueError:
+            pass # Se por acaso a caixa estiver vazia, não faz nada e não dá erro
+            
+        return "break" # Impede que o evento se espalhe
+
 
     def criar_linha_ui(self, move, lvl):
         f = ttk.Frame(self.scroll_frame)
@@ -369,8 +581,21 @@ class PokemonEditor:
         l_entry.insert(0, lvl)
         l_entry.pack(side="left", padx=2)
         
+        # ✨ A MÁGICA DA INVERSÃO ✨
+        
+        # 1. Setas SOZINHAS agora navegam! (e retornam 'break' para não mudar o valor)
+        l_entry.bind('<Up>', lambda e: self.navegar_leveis(-1))
+        l_entry.bind('<Down>', lambda e: self.navegar_leveis(1))
+        
+        # 2. Ctrl + Setas agora mudam o valor da caixa (chamando a nossa nova função)
+        # Atenção ao "w=l_entry" no lambda: isso garante que ele altere a caixa certa!
+        l_entry.bind('<Control-Up>', lambda e, w=l_entry: self.alterar_valor_spinbox(w, 1))
+        l_entry.bind('<Control-Down>', lambda e, w=l_entry: self.alterar_valor_spinbox(w, -1))
         m_entry.bind('<KeyRelease>', self.destacar_duplicatas)
         l_entry.bind('<KeyRelease>', self.destacar_duplicatas)
+
+        # Atalho para deletar a linha inteira ao apertar a tecla Delete na Spinbox
+        l_entry.bind('<Delete>', lambda e, f=f: self.confirmar_delecao_atalho(f))
 
         # ---> CÓDIGO NOVO: Volta o foco para a lista principal ao apertar Enter <---
         m_entry.bind('<Return>', lambda e: self.lb_pkmn.focus_set())
@@ -387,6 +612,16 @@ class PokemonEditor:
                    command=lambda: self.deletar_golpe(f)).pack(side="left")
         
         self.destacar_duplicatas()
+    
+    def confirmar_delecao_atalho(self, frame_da_linha, event=None):
+        resposta = messagebox.askyesno("Confirmar Exclusão", "Deseja realmente deletar este golpe?")
+        
+        if resposta:
+            self.deletar_golpe(frame_da_linha)
+            # Espera 50 milissegundos para o Frame ser destruído, depois foca no próximo level disponível
+            self.root.after(50, lambda: self.navegar_leveis(1)) 
+            
+        return "break"
 
     def iniciar_copia(self, move, lvl):
         move = move.strip()
@@ -439,7 +674,7 @@ class PokemonEditor:
             return
             
         selecionado = self.lb_alvo.get(self.lb_alvo.curselection())
-        selecionado = selecionado.replace("✅ ", "") 
+        selecionado = selecionado.replace("✅ ", "").replace("⭐ ", "") 
         target_name = selecionado.split(" - ", 1)[1]
         
         tipo_copia = self.move_copia_atual[0]
@@ -455,6 +690,7 @@ class PokemonEditor:
         self.esconder_painel_copia()
 
     def executar_copia(self, move, lvl, target_pokemon):
+        self.salvar_estado_para_desfazer()
         try:
             idx = self.df_original.index[self.df_original['Name'] == target_pokemon][0]
             linha = self.df_original.iloc[idx]
@@ -523,6 +759,7 @@ class PokemonEditor:
             self.lb_pkmn.focus_set()
 
     def executar_copia_todos(self, golpes_para_copiar, target_pokemon):
+        self.salvar_estado_para_desfazer()
         try:
             idx = self.df_original.index[self.df_original['Name'] == target_pokemon][0]
             linha = self.df_original.iloc[idx]
@@ -582,6 +819,8 @@ class PokemonEditor:
             self.lb_pkmn.focus_set()
 
     def organizar_visual(self):
+        if self.df_original is None: return
+        self.salvar_estado_para_desfazer() # <--- FOTO ANTES DE REORGANIZAR        
         dados = []
         for w in self.scroll_frame.winfo_children():
             ents = [e for e in w.winfo_children() if isinstance(e, (tk.Entry, tk.Spinbox))]
@@ -596,9 +835,63 @@ class PokemonEditor:
 
     def add_blank_move(self):
         if self.df_original is not None:
+            self.salvar_estado_para_desfazer()
             self.criar_linha_ui("NOVO_GOLPE", "1")
             self.canvas.yview_moveto(1.0)
             self.root.after(10, self.atualizar_contador_golpes)
+
+    def salvar_estado_para_desfazer(self):
+        if self.df_original is None: return
+        
+        # 1. Salva o que está na tela agora no DataFrame
+        self.salvar_em_memoria() 
+        
+        # 2. Limita o histórico para não pesar a RAM
+        if len(self.historico_undo) > 20:
+            self.historico_undo.pop(0)
+            
+        # 3. Tira a foto usando a função nativa do Pandas e guarda na gaveta
+        self.historico_undo.append(self.df_original.copy())
+        
+        # 4. Apaga o futuro (se você fez uma ação nova, não dá pra refazer a antiga)
+        self.historico_redo.clear()
+
+        # ---> ATUALIZA OS BOTÕES AQUI <---
+        self.atualizar_estado_botoes_historico()
+
+    def executar_ctrl_z(self, event=None):
+        if not self.historico_undo: return "break"
+        
+        # Salva o estado atual (erro) no Redo
+        self.salvar_em_memoria()
+        self.historico_redo.append(self.df_original.copy())
+        
+        # Puxa o passado e substitui o cérebro do programa
+        estado_anterior = self.historico_undo.pop()
+        self.df_original = estado_anterior.copy()
+        
+        # Redesenha a tela mágica!
+        self.recarregar_ui_atual()
+
+
+        self.atualizar_estado_botoes_historico()
+        return "break"
+
+    def executar_ctrl_y(self, event=None):
+        if not self.historico_redo: return "break"
+        
+        # Salva o estado atual no Undo
+        self.salvar_em_memoria()
+        self.historico_undo.append(self.df_original.copy())
+        
+        # Puxa o futuro e substitui
+        estado_futuro = self.historico_redo.pop()
+        self.df_original = estado_futuro.copy()
+        
+        self.recarregar_ui_atual()
+
+        self.atualizar_estado_botoes_historico()
+        return "break"
 
     def exportar_final(self):
         if self.df_original is None: return

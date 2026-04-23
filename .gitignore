@@ -1,6 +1,7 @@
 *.xlsx
 *.csv
 *.db
+*.spec
 __pycache__/
 .pytest_cache/
 .venv/
