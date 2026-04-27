@@ -1,3 +1,10 @@
+*.xlsx
+*.csv
+*.db
+*.spec
 __pycache__/
 .pytest_cache/
 .venv/
+.env
+build/
+dist/
