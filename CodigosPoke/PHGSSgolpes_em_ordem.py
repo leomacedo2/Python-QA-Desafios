@@ -1,7 +1,7 @@
 import requests
 import time
 
-# Dicionário de Cores e Emojis
+# Dicionários de Cores e Emojis
 TABELA_TIPOS = {
     'Normal':   ('\033[97m', '⚪'), 
     'Fire':     ('\033[91m', '🔥'), 
@@ -21,6 +21,21 @@ TABELA_TIPOS = {
     'Dark':     ('\033[90m', '🌙'), 
     'Steel':    ('\033[37m', '⚙️'), 
 }
+
+CATEGORIA_GOLPE = {
+    'physical': ('\033[91m', '💥', 'Físico'),
+    'special':  ('\033[96m', '🌀', 'Especial'),
+    'status':   ('\033[90m', '🛡️', 'Status')
+}
+
+METODOS_EMOJI = {
+    'level-up': '📈 Nível',
+    'machine': '💿 TM/HM',
+    'egg': '🥚 Ovo',
+    'tutor': '👨‍🏫 Tutor',
+    'light-ball-egg': '⚡ Ovo Especial'
+}
+
 RESET_COR = '\033[0m'
 
 # Mapeamento estrito das gerações para a Máquina do Tempo
@@ -37,20 +52,19 @@ GEN_VERSIONS = {
     'scarlet-violet': 9.0
 }
 
-# Dicionário para validar de qual geração um Pokémon pertence
 GEN_NOME_PARA_NUM = {
     'generation-i': 1, 'generation-ii': 2, 'generation-iii': 3,
     'generation-iv': 4, 'generation-v': 5, 'generation-vi': 6,
     'generation-vii': 7, 'generation-viii': 8, 'generation-ix': 9
 }
 
-def buscar_golpes_linhagem_frlg(pokemon_id):
-    print(f"\n🔍 Iniciando busca pelo Pokémon ID: {pokemon_id} em FireRed/LeafGreen...")
+def buscar_golpes_linhagem_hgss(pokemon_id):
+    print(f"\n🔍 Iniciando busca pelo Pokémon ID: {pokemon_id} em HeartGold/SoulSilver...")
     
     linhagem = []
     especie_atual = str(pokemon_id)
     
-    # 1. Traçar a árvore genealógica de trás para frente
+    # 1. Traçar a árvore genealógica de trás para frente (Até Gen 4)
     try:
         url_poke = f"https://pokeapi.co/api/v2/pokemon/{pokemon_id}"
         resp_poke = requests.get(url_poke)
@@ -84,7 +98,7 @@ def buscar_golpes_linhagem_frlg(pokemon_id):
             resp_pre = requests.get(preevolucao['url']).json()
             gen_pre = GEN_NOME_PARA_NUM.get(resp_pre['generation']['name'], 99)
             
-            if gen_pre <= 3:
+            if gen_pre <= 4:
                 especie_atual = preevolucao['name']
             else:
                 especie_atual = None
@@ -93,15 +107,13 @@ def buscar_golpes_linhagem_frlg(pokemon_id):
 
     print(f"🧬 Linhagem encontrada: {' <- '.join(linhagem).title()}")
     
-    # 2. Coletar golpes FRLG (COM CINTO DE SEGURANÇA 🔒)
+    # 2. Coletar golpes HGSS
     golpes_dict = {} 
     for poke in linhagem:
         url_poke = f"https://pokeapi.co/api/v2/pokemon/{poke}"
         resp_req = requests.get(url_poke)
         
-        # Só tenta ler o JSON se a resposta for 200 (OK)
         if resp_req.status_code != 200:
-            # Caso o nome da espécie não seja uma URL válida de Pokémon, tenta com o sufixo normal
             url_alternativa = f"https://pokeapi.co/api/v2/pokemon/{poke}-normal"
             resp_req = requests.get(url_alternativa)
             if resp_req.status_code != 200:
@@ -113,18 +125,18 @@ def buscar_golpes_linhagem_frlg(pokemon_id):
         for move_data in resp_poke['moves']:
             nome_golpe = move_data['move']['name']
             for detail in move_data['version_group_details']:
-                if detail['version_group']['name'] == 'firered-leafgreen':
+                if detail['version_group']['name'] == 'heartgold-soulsilver':
                     metodo = detail['move_learn_method']['name']
                     if nome_golpe not in golpes_dict:
                         golpes_dict[nome_golpe] = set()
                     golpes_dict[nome_golpe].add(metodo)
                 
     if not golpes_dict:
-        print("⚠️ Nenhum golpe encontrado para este Pokémon na Geração 3.")
+        print("⚠️ Nenhum golpe encontrado para este Pokémon na Geração 4.")
         return
 
     # 3. Baixar dados técnicos
-    print(f"📡 Baixando dados técnicos de {len(golpes_dict)} golpes únicos de FRLG...")
+    print(f"📡 Baixando dados técnicos de {len(golpes_dict)} golpes únicos de HGSS...")
     
     lista_bruta = []
     total_golpes = len(golpes_dict)
@@ -141,22 +153,28 @@ def buscar_golpes_linhagem_frlg(pokemon_id):
             accuracy_str = str(resp_move.get('accuracy')) if resp_move.get('accuracy') is not None else '-'
             pp_str = str(resp_move.get('pp')) if resp_move.get('pp') is not None else '-'
             
+            categoria_raw = resp_move.get('damage_class', {}).get('name', 'status')
+            
             past_values = resp_move.get('past_values', [])
             past_values.sort(key=lambda x: GEN_VERSIONS.get(x['version_group']['name'], 99.0), reverse=True)
             
             for past in past_values:
                 gen_mudanca = GEN_VERSIONS.get(past['version_group']['name'], 99.0)
                 
-                if gen_mudanca > 3.2:
+                if gen_mudanca > 4.2:
                     if past.get('power') is not None: power_val = past['power']
                     if past.get('accuracy') is not None: accuracy_str = str(past['accuracy'])
                     if past.get('pp') is not None: pp_str = str(past['pp'])
                     if past.get('type') is not None: tipo_golpe = past['type']['name'].title()
             
-            metodos_str = ", ".join(sorted(metodos))
+            # Formatando os métodos com os Emojis
+            metodos_formatados = [METODOS_EMOJI.get(m, f"🔹 {m.title()}") for m in sorted(metodos)]
+            metodos_str = ", ".join(metodos_formatados)
+            
             lista_bruta.append({
                 'nome': nome_golpe.title().replace('-', ' '),
                 'tipo': tipo_golpe,
+                'categoria': categoria_raw,
                 'metodos': metodos_str,
                 'power': power_val,
                 'accuracy': accuracy_str,
@@ -185,24 +203,31 @@ def buscar_golpes_linhagem_frlg(pokemon_id):
         lista_final.extend(golpes_deste_tipo)
 
     # 5. Impressão
-    print("\n" + "="*107)
-    print(f"{'NOME DO GOLPE':<18} | {'TIPO':<11} | {'MÉTODO(S)':<40} | {'FORÇA':<6} | {'ACURÁCIA':<8} | {'PP':<4}")
-    print("="*107)
+    print("\n" + "="*133)
+    # Aumentei o espaçamento da coluna MÉTODO(S) para comportar os emojis sem quebrar a tabela
+    print(f"{'NOME DO GOLPE':<18} | {'TIPO':<11} | {'CATEGORIA':<12} | {'MÉTODO(S)':<45} | {'FORÇA':<6} | {'ACURÁCIA':<8} | {'PP':<4}")
+    print("="*133)
     
     for g in lista_final:
         forca_exibicao = str(g['power']) if g['power'] > 0 else '-'
-        cor, emoji = TABELA_TIPOS.get(g['tipo'], ('\033[37m', '✨'))
-        tipo_formatado = f"{cor}{emoji} {g['tipo']:<8}{RESET_COR}"
         
-        print(f"{g['nome']:<18} | {tipo_formatado} | {g['metodos']:<40} | {forca_exibicao:<6} | {g['accuracy']:<8} | {g['pp']:<4}")
-    print("="*107)
+        # Formatando Tipo
+        cor_tipo, emoji_tipo = TABELA_TIPOS.get(g['tipo'], ('\033[37m', '✨'))
+        tipo_formatado = f"{cor_tipo}{emoji_tipo} {g['tipo']:<8}{RESET_COR}"
+        
+        # Formatando Categoria
+        cor_cat, emoji_cat, nome_cat = CATEGORIA_GOLPE.get(g['categoria'], ('\033[37m', '✨', '???'))
+        cat_formatada = f"{cor_cat}{emoji_cat} {nome_cat:<8}{RESET_COR}"
+        
+        print(f"{g['nome']:<18} | {tipo_formatado} | {cat_formatada} | {g['metodos']:<45} | {forca_exibicao:<6} | {g['accuracy']:<8} | {g['pp']:<4}")
+    print("="*133)
 
 if __name__ == "__main__":
-    print("Bem-vindo ao Analisador de Movesets FireRed/LeafGreen (Stats & Evoluções Históricas Corrigidas)!")
+    print("Bem-vindo ao Analisador de Movesets HeartGold/SoulSilver (Versão Emoji)!")
     while True:
         entrada = input("\nDigite o ID numérico do Pokémon (ou digite 'sair' para encerrar): ")
         if entrada.lower() == 'sair': break
         if not entrada.isdigit():
             print("❌ Por favor, digite apenas números válidos.")
             continue
-        buscar_golpes_linhagem_frlg(int(entrada))
+        buscar_golpes_linhagem_hgss(int(entrada))
