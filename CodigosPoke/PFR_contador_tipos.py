@@ -1,45 +1,84 @@
 import requests
 from collections import defaultdict
 
-# Quantidade de Pokémon da geração 1 até 3
-MAX_POKEMON = 386
-
-# URL base da PokéAPI
 BASE_URL = "https://pokeapi.co/api/v2/pokemon/"
 
-# Dicionário para contar os tipos
+# Tipos válidos da Gen 3
+TIPOS_GEN3 = {
+    "normal",
+    "fire",
+    "water",
+    "electric",
+    "grass",
+    "ice",
+    "fighting",
+    "poison",
+    "ground",
+    "flying",
+    "psychic",
+    "bug",
+    "rock",
+    "ghost",
+    "dragon",
+    "dark",
+    "steel"
+}
+
+# Correções manuais dos Pokémon afetados pelo tipo Fairy
+CORRECOES_GEN3 = {
+    35: ["normal"],             # Clefairy
+    36: ["normal"],             # Clefable
+    39: ["normal"],             # Jigglypuff
+    40: ["normal"],             # Wigglytuff
+    173: ["normal"],            # Cleffa
+    174: ["normal"],            # Igglybuff
+    175: ["normal"],            # Togepi
+    176: ["normal", "flying"],  # Togetic
+    209: ["normal"],            # Snubbull
+    210: ["normal"],            # Granbull
+    280: ["psychic"],           # Ralts
+    281: ["psychic"],           # Kirlia
+    282: ["psychic"],           # Gardevoir
+    298: ["normal"],            # Azurill
+}
+
 contador_tipos = defaultdict(int)
 
-print("🔎 Analisando Pokémon...\n")
+print("🔎 Analisando Pokémon da Gen 3...\n")
 
-for pokemon_id in range(1, MAX_POKEMON + 1):
-    url = f"{BASE_URL}{pokemon_id}"
+for pokemon_id in range(1, 387):
 
     try:
-        response = requests.get(url)
+        response = requests.get(f"{BASE_URL}{pokemon_id}")
         response.raise_for_status()
 
         dados = response.json()
 
         nome = dados["name"].capitalize()
 
-        # Lista de tipos do Pokémon
-        tipos = [tipo["type"]["name"] for tipo in dados["types"]]
+        # Se tiver correção manual
+        if pokemon_id in CORRECOES_GEN3:
+            tipos = CORRECOES_GEN3[pokemon_id]
+
+        else:
+            tipos = [
+                tipo["type"]["name"]
+                for tipo in dados["types"]
+                if tipo["type"]["name"] in TIPOS_GEN3
+            ]
 
         print(f"{pokemon_id:03d} - {nome} -> {', '.join(tipos)}")
 
-        # Soma +1 para cada tipo
         for tipo in tipos:
             contador_tipos[tipo] += 1
 
     except requests.exceptions.RequestException as erro:
-        print(f"Erro ao buscar Pokémon {pokemon_id}: {erro}")
+        print(f"Erro no Pokémon {pokemon_id}: {erro}")
 
 print("\n" + "=" * 40)
-print("📊 TOTAL DE POKÉMON POR TIPO")
+print("📊 TOTAL DE POKÉMON POR TIPO (GEN 3)")
 print("=" * 40)
 
-# Ordena do maior para o menor
 for tipo, quantidade in sorted(
     contador_tipos.items(),
     key=lambda item: item[1],
