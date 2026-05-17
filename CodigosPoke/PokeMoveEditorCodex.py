@@ -5,6 +5,7 @@ import pandas as pd
 import os
 import json
 import copy
+import csv
 import requests
 import threading
 from io import BytesIO
@@ -67,6 +68,7 @@ class PokemonEditor:
         self.arquivo_favoritos = None 
         self.historico_undo = []
         self.historico_redo = []
+        self.lista_formatada = []
         self.frame_controle_copia_visivel = False
         
         # Caches para não gastar internet à toa
@@ -521,26 +523,59 @@ class PokemonEditor:
 
     # =============== ARQUIVOS E LISTAS ===============
     def selecionar_arquivo(self, caminho_direto=None):
-        if caminho_direto: caminho = caminho_direto
-        else: caminho = filedialog.askopenfilename(filetypes=[("Arquivos CSV", "*.csv")])
+        if caminho_direto:
+            caminho = caminho_direto
+        else:
+            caminho = filedialog.askopenfilename(filetypes=[("Arquivos CSV", "*.csv")])
             
         if caminho:
             try:
-                self.df_original = pd.read_csv(caminho, sep=',', encoding='utf-8', dtype=str).fillna("0")
+                df_temp = self.ler_csv_golpes(caminho)
+
+                if 'ID' not in df_temp.columns or 'Name' not in df_temp.columns:
+                    raise ValueError("CSV inválido: precisa ter as colunas ID e Name.")
+
+                primeiro_id = str(df_temp.iloc[0]['ID']).strip()
+                primeiro_nome = str(df_temp.iloc[0]['Name']).strip()
+
+                if not primeiro_id.isdigit():
+
+                    primeiras_linhas = df_temp.head(3).to_string(index=False)
+
+                    raise ValueError(
+                        f"CSV parece estar com as colunas deslocadas.\n\n"
+                        f"Arquivo aberto:\n{caminho}\n\n"
+                        f"Primeiro valor em ID: {primeiro_id}\n"
+                        f"Primeiro valor em Name: {primeiro_nome}\n\n"
+                        f"Primeiras linhas lidas:\n{primeiras_linhas}\n\n"
+                        f"A coluna ID deveria conter números de Pokémon."
+                    )
+                if primeiro_nome.isdigit():
+                    raise ValueError(
+                        f"CSV parece estar invertido/deslocado.\n"
+                        f"Primeiro valor em Name: {primeiro_nome}\n"
+                        f"A coluna Name deveria conter nomes de Pokémon."
+                    )
+
+                self.df_original = df_temp
                 self.caminho_arquivo = caminho
                 self.arquivo_progresso = self.caminho_arquivo.replace('.csv', '_progresso.json')
                 
                 self.completed_set, self.favorites_set = set(), set()
                 if os.path.exists(self.arquivo_progresso):
                     try:
-                        with open(self.arquivo_progresso, 'r', encoding='utf-8') as f: self.completed_set = set(json.load(f))
-                    except: pass
+                        with open(self.arquivo_progresso, 'r', encoding='utf-8') as f:
+                            self.completed_set = set(json.load(f))
+                    except:
+                        pass
                 
                 self.arquivo_favoritos = self.caminho_arquivo.replace('.csv', '_favoritos.json')
                 if os.path.exists(self.arquivo_favoritos):
                     try:
-                        with open(self.arquivo_favoritos, 'r', encoding='utf-8') as f: self.favorites_set = set(json.load(f))
-                    except: pass
+                        with open(self.arquivo_favoritos, 'r', encoding='utf-8') as f:
+                            self.favorites_set = set(json.load(f))
+                    except:
+                        pass
 
                 self.main_frame.pack(fill="both", expand=True)
                 self.btn_frame.pack(fill="x", side="bottom", pady=10)
@@ -553,8 +588,50 @@ class PokemonEditor:
                 self.salvar_config()
                 
             except Exception as e:
+                self.df_original = None
+                self.pokemon_atual = None
+                self.lista_formatada = []
+
+                if hasattr(self, 'lb_pkmn'):
+                    self.lb_pkmn.delete(0, tk.END)
+
+                if hasattr(self, 'lb_alvo'):
+                    self.lb_alvo.delete(0, tk.END)
+
+                if hasattr(self, 'lbl_nome'):
+                    self.lbl_nome.configure(text="Nenhum arquivo carregado")
+
                 messagebox.showerror("Erro", f"Não foi possível ler:\n{e}")
 
+    def ler_csv_golpes(self, caminho):
+        with open(caminho, "r", encoding="utf-8", newline="") as f:
+            linhas = list(csv.reader(f))
+
+        if not linhas:
+            raise ValueError("CSV vazio.")
+
+        maior_linha = max(len(linha) for linha in linhas)
+        cabecalho = linhas[0]
+
+        if len(cabecalho) < maior_linha:
+            cabecalho = cabecalho[:2]
+            qtd_pares = (maior_linha - 2) // 2
+
+            for _ in range(qtd_pares):
+                cabecalho.extend(["Move", "Lvl"])
+
+        dados = []
+
+        for linha in linhas[1:]:
+            if len(linha) < maior_linha:
+                linha = linha + ["0"] * (maior_linha - len(linha))
+            elif len(linha) > maior_linha:
+                linha = linha[:maior_linha]
+
+            dados.append(linha)
+
+        return pd.DataFrame(dados, columns=cabecalho).fillna("0")
+    
     def carregar_lista_nomes(self):
         self.lista_formatada = []
         for idx, row in self.df_original.iterrows():
