@@ -71,6 +71,22 @@ class PokemonEditor:
         self.lista_formatada = []
         self.frame_controle_copia_visivel = False
         
+        self.api_request_id = 0
+
+        # Adições do CODEX
+        self.arquivo_cache_familias = "cache_familias_pokeapi.json"
+        if os.path.exists(self.arquivo_cache_familias):
+            try:
+                with open(self.arquivo_cache_familias, "r", encoding="utf-8") as f:
+                    self.cache_familias = json.load(f)
+            except:
+                self.cache_familias = {}
+        else:
+            self.cache_familias = {}
+        
+        self.pasta_cache_sprites = "cache_sprites"
+        os.makedirs(self.pasta_cache_sprites, exist_ok=True)
+
         # Caches para não gastar internet à toa
         self.cache_sprites = {} 
         self.cache_familias = {}
@@ -133,6 +149,22 @@ class PokemonEditor:
                                             values=["Mostrar todos", "Mostrar completos", "Mostrar incompletos", "Favoritos"],
                                             command=self.filtrar_lista, state="readonly")
         self.combo_filter.pack(fill="x", padx=10, pady=5)
+
+        self.frame_contadores_status = ctk.CTkFrame(self.frame_lista, fg_color="transparent")
+        self.frame_contadores_status.pack(fill="x", padx=10, pady=(5, 10))
+
+        self.lbl_count_favoritos = ctk.CTkLabel(self.frame_contadores_status, text="Favoritos: 0", anchor="w")
+        self.lbl_count_favoritos.pack(fill="x")
+
+        self.lbl_count_completos = ctk.CTkLabel(self.frame_contadores_status, text="Completos: 0", anchor="w")
+        self.lbl_count_completos.pack(fill="x")
+
+        self.lbl_count_marcados = ctk.CTkLabel(self.frame_contadores_status, text="Completos ou favoritos: 0", anchor="w")
+        self.lbl_count_marcados.pack(fill="x")
+
+        self.lbl_count_sem_marcacao = ctk.CTkLabel(self.frame_contadores_status, text="Sem marcação: 0", anchor="w", text_color="#ffcc00")
+        self.lbl_count_sem_marcacao.pack(fill="x")
+
 
         self.search_var = tk.StringVar()
         self.search_var.trace("w", self.filtrar_lista)
@@ -384,7 +416,7 @@ class PokemonEditor:
         if nome_original in excecoes: return excecoes[nome_original]
         return str(nome_csv).lower().strip().replace(" ", "-").replace(".", "").replace("'", "")
 
-    def buscar_familia_api(self, nome_csv):
+    def buscar_familia_api(self, nome_csv, request_id):
         nome_api = self.traduzir_nome_para_api(nome_csv)
         familia = [nome_api] 
         
@@ -394,25 +426,38 @@ class PokemonEditor:
             try:
                 url_species = f"https://pokeapi.co/api/v2/pokemon-species/{nome_api}"
                 resp_species = requests.get(url_species, timeout=3)
+
                 if resp_species.status_code == 200:
                     evo_chain_url = resp_species.json()['evolution_chain']['url']
                     resp_chain = requests.get(evo_chain_url, timeout=3)
+
                     if resp_chain.status_code == 200:
                         chain_data = resp_chain.json()['chain']
                         familia = self.extrair_nomes_cadeia(chain_data)
-                        self.cache_familias[nome_api] = familia
-            except: pass
-        
+                        familia = self.aplicar_excecoes_familia(familia)
 
-        familia = self.aplicar_excecoes_familia(familia)        
-        # >>> ADICIONE ESTA LINHA PARA O ATALHO SABER QUEM É A FAMÍLIA <<<
+                        self.cache_familias[nome_api] = familia
+
+                        try:
+                            with open(self.arquivo_cache_familias, "w", encoding="utf-8") as f:
+                                json.dump(self.cache_familias, f, ensure_ascii=False, indent=2)
+                        except:
+                            pass
+            except:
+                pass     
+
+        familia = self.aplicar_excecoes_familia(familia)
+
+        if request_id != self.api_request_id:
+            return
+        # >>> ADICIONE ESTA LINHA PARA O ATALHO SABER QUEM É A FAMÍLIA <<< 
         self.familia_atual_api_nomes = familia
-        
+
         self.root.after(0, lambda: (
-        self.desenhar_fita_da_familia(familia, nome_csv),
-        self.atualizar_alertas_copia_familia(),
-        self.filtrar_lista_alvo()
-    ))
+            self.desenhar_fita_da_familia(familia, nome_csv),
+            self.atualizar_alertas_copia_familia(),
+            self.filtrar_lista_alvo()
+        ))
 
 
     def extrair_nomes_cadeia(self, node):
@@ -459,20 +504,37 @@ class PokemonEditor:
             self.root.after(0, lambda: self.atualizar_imagem_label(label_widget, self.cache_sprites[nome_buscado]))
             return
 
+        caminho_sprite = os.path.join(self.pasta_cache_sprites, f"{nome_buscado}.png")
+
         try:
+            if os.path.exists(caminho_sprite):
+                img_dados = Image.open(caminho_sprite)
+                img_tk = ctk.CTkImage(light_image=img_dados, dark_image=img_dados, size=(72, 72))
+                self.cache_sprites[nome_buscado] = img_tk
+                self.root.after(0, lambda: self.atualizar_imagem_label(label_widget, img_tk))
+                return
+
             url_api = f"https://pokeapi.co/api/v2/pokemon/{nome_buscado}"
             resposta = requests.get(url_api, timeout=3)
+
             if resposta.status_code == 200:
                 url_imagem = resposta.json()['sprites']['front_default']
+
                 if url_imagem:
-                    resp_img = requests.get(url_imagem)
+                    resp_img = requests.get(url_imagem, timeout=3)
                     img_dados = Image.open(BytesIO(resp_img.content))
+                    img_dados.save(caminho_sprite)
+
                     img_tk = ctk.CTkImage(light_image=img_dados, dark_image=img_dados, size=(72, 72))
                     self.cache_sprites[nome_buscado] = img_tk
                     self.root.after(0, lambda: self.atualizar_imagem_label(label_widget, img_tk))
-                else: self.root.after(0, lambda: self.atualizar_imagem_label(label_widget, None, "Sem img")) 
-            else: self.root.after(0, lambda: self.atualizar_imagem_label(label_widget, None, "Erro API")) 
-        except: self.root.after(0, lambda: self.atualizar_imagem_label(label_widget, None, "Sem net"))
+                else:
+                    self.root.after(0, lambda: self.atualizar_imagem_label(label_widget, None, "Sem img"))
+            else:
+                self.root.after(0, lambda: self.atualizar_imagem_label(label_widget, None, "Erro API"))
+
+        except:
+            self.root.after(0, lambda: self.atualizar_imagem_label(label_widget, None, "Sem net"))
 
     def atualizar_imagem_label(self, label_widget, img_tk, texto=""):
         if not label_widget.winfo_exists(): return
@@ -580,7 +642,10 @@ class PokemonEditor:
                 self.main_frame.pack(fill="both", expand=True)
                 self.btn_frame.pack(fill="x", side="bottom", pady=10)
                 self.carregar_lista_nomes()
-                self.lbl_status.configure(text=f"Editando: {os.path.basename(caminho)}", text_color="#2E8B57")
+                self.atualizar_contadores_status()
+                self.lbl_status.configure(
+                text=f"Editando: {os.path.basename(caminho)}",
+                text_color="#2E8B57")
                 
                 self.historico_undo.clear()
                 self.historico_redo.clear()
@@ -860,6 +925,7 @@ class PokemonEditor:
         self.filtrar_lista_alvo()
         self.restaurar_selecao_lista()
         self.lb_pkmn.focus_set()
+        self.atualizar_contadores_status()
 
     def toggle_favorite_atalho(self, event=None):
         if not self.pokemon_atual: return
@@ -878,6 +944,23 @@ class PokemonEditor:
         if hasattr(self, 'filtrar_lista_alvo'): self.filtrar_lista_alvo()
         self.restaurar_selecao_lista()
         self.lb_pkmn.focus_set()
+        self.atualizar_contadores_status()
+
+    def atualizar_contadores_status(self):
+        if self.df_original is None:
+            return
+
+        nomes_validos = set(self.df_original['Name'].astype(str).tolist())
+
+        favoritos = self.favorites_set & nomes_validos
+        completos = self.completed_set & nomes_validos
+        marcados = favoritos | completos
+        sem_marcacao = nomes_validos - marcados
+
+        self.lbl_count_favoritos.configure(text=f"Favoritos: {len(favoritos)}")
+        self.lbl_count_completos.configure(text=f"Completos: {len(completos)}")
+        self.lbl_count_marcados.configure(text=f"Completos ou favoritos: {len(marcados)}")
+        self.lbl_count_sem_marcacao.configure(text=f"Sem marcação: {len(sem_marcacao)}")
 
     # =============== GERENCIAMENTO DE DADOS ===============
     def obter_nome_csv_por_nome_api(self, nome_api):
@@ -983,7 +1066,14 @@ class PokemonEditor:
         for widget in self.scroll_fita_imagens.winfo_children(): widget.destroy()
         lbl_loading = ctk.CTkLabel(self.scroll_fita_imagens, text="Buscando família na API...", text_color="gray")
         lbl_loading.pack(padx=10, pady=10)
-        threading.Thread(target=self.buscar_familia_api, args=(nome,), daemon=True).start()
+        self.api_request_id += 1
+        request_id = self.api_request_id
+
+        threading.Thread(
+            target=self.buscar_familia_api,
+            args=(nome, request_id),
+            daemon=True
+        ).start()
         
         self.recarregar_ui_atual()
         self.esconder_painel_copia()
@@ -1537,13 +1627,65 @@ class PokemonEditor:
                 self.lb_pkmn.event_generate("<<ListboxSelect>>")
                 break
 
+    def pokemons_com_mais_de_20_golpes(self):
+        excedentes = []
+
+        for _, row in self.df_original.iterrows():
+            nome = str(row['Name'])
+            count = 0
+
+            for i in range(2, len(self.df_original.columns), 2):
+                move = str(row.iloc[i]).strip()
+
+                if move not in ["", "0", "nan", "NOVO_GOLPE"]:
+                    count += 1
+
+            if count > 20:
+                excedentes.append((nome, count))
+
+        return excedentes
+    
     def exportar_final(self):
-        if self.df_original is None: return
+        if self.df_original is None:
+            return
+
         self.salvar_em_memoria()
+
         try:
-            self.df_original.to_csv(self.caminho_arquivo, index=False)
-            self.lbl_status.configure(text=f"✅ Salvo no arquivo com sucesso às {pd.Timestamp.now().strftime('%H:%M:%S')}!", text_color="#2E8B57")
-        except Exception as e: messagebox.showerror("Erro ao gravar", f"Erro: {e}")
+            excedentes = self.pokemons_com_mais_de_20_golpes()
+
+            if excedentes:
+                nomes = "\n".join([f"{nome}: {qtd} golpes" for nome, qtd in excedentes[:15]])
+
+                if len(excedentes) > 15:
+                    nomes += f"\n... e mais {len(excedentes) - 15}"
+
+                messagebox.showerror(
+                    "Limite de golpes",
+                    "O Randomizer aceita no máximo 20 golpes por Pokémon.\n\n"
+                    "Estes Pokémon ainda passaram do limite:\n\n"
+                    f"{nomes}\n\n"
+                    "Remova golpes antes de salvar."
+                )
+                return
+
+            df_export = self.df_original.copy()
+            limite_colunas = 42
+
+            if len(df_export.columns) > limite_colunas:
+                df_export = df_export.iloc[:, :limite_colunas]
+
+            df_export.to_csv(self.caminho_arquivo, index=False)
+
+            self.df_original = df_export
+
+            self.lbl_status.configure(
+                text=f"✅ Salvo no arquivo com sucesso às {pd.Timestamp.now().strftime('%H:%M:%S')}!",
+                text_color="#2E8B57"
+            )
+
+        except Exception as e:
+            messagebox.showerror("Erro ao gravar", f"Erro: {e}")
 
 if __name__ == "__main__":
     root = ctk.CTk()
