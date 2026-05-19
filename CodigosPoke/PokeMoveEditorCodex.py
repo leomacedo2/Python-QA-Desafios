@@ -10,6 +10,8 @@ import requests
 import threading
 from io import BytesIO
 from PIL import Image
+from openpyxl import Workbook
+from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 
 # Configuração do Tema Moderno
 ctk.set_appearance_mode("dark")
@@ -149,6 +151,18 @@ class PokemonEditor:
                                             values=["Mostrar todos", "Mostrar completos", "Mostrar incompletos", "Favoritos"],
                                             command=self.filtrar_lista, state="readonly")
         self.combo_filter.pack(fill="x", padx=10, pady=5)
+
+        ctk.CTkLabel(self.frame_lista, text="Filtro por golpes:", font=("Roboto", 12, "bold")).pack(pady=(5,0))
+
+        self.filter_qtd_golpes_var = tk.StringVar(value="Todos")
+        self.combo_filter_qtd = ctk.CTkComboBox(
+            self.frame_lista,
+            variable=self.filter_qtd_golpes_var,
+            values=["Todos"],
+            command=self.filtrar_lista,
+            state="readonly"
+        )
+        self.combo_filter_qtd.pack(fill="x", padx=10, pady=5)
 
         self.frame_contadores_status = ctk.CTkFrame(self.frame_lista, fg_color="transparent")
         self.frame_contadores_status.pack(fill="x", padx=10, pady=(5, 10))
@@ -294,6 +308,13 @@ class PokemonEditor:
         ctk.CTkButton(self.btn_frame, text="⚡ Ordenar (Ctrl+D)", command=self.organizar_visual, fg_color="#0056b3", hover_color="#004494").pack(side="left", padx=10)
         ctk.CTkButton(self.btn_frame, text="📑 Copiar TODOS", command=self.iniciar_copia_todos, fg_color="#1f538d", hover_color="#14375e").pack(side="left", padx=10)
         ctk.CTkButton(self.btn_frame, text="💾 SALVAR TUDO (Ctrl+S)", command=self.exportar_final, fg_color="#2E8B57", hover_color="#1d5c39").pack(side="left", padx=10)
+        ctk.CTkButton(
+            self.btn_frame,
+            text="📊 Exportar Excel",
+            command=self.exportar_excel_ultimos_golpes,
+            fg_color="#008080",
+            hover_color="#006666"
+        ).pack(side="left", padx=10)
 
         self.lbl_status = ctk.CTkLabel(root, text="Aguardando arquivo CSV...", text_color="#1f538d", font=("Roboto", 12, "bold"))
         self.lbl_status.pack(side="bottom", pady=10)
@@ -703,6 +724,7 @@ class PokemonEditor:
             pid = str(row['ID']).replace('.0', '')
             pname = str(row['Name'])
             self.lista_formatada.append(f"{pid} - {pname}")
+        self.atualizar_opcoes_filtro_quantidade()
         self.filtrar_lista()
         self.filtrar_lista_alvo()
 
@@ -710,7 +732,8 @@ class PokemonEditor:
         if self.df_original is None: return
         search = self.search_var.get().upper()
         status_filtro = self.filter_status_var.get()
-        
+        qtd_filtro = self.filter_qtd_golpes_var.get() if hasattr(self, 'filter_qtd_golpes_var') else "Todos"
+
         self.lb_pkmn.delete(0, tk.END)
         for item in self.lista_formatada:
             pname = item.split(" - ", 1)[1]
@@ -720,6 +743,17 @@ class PokemonEditor:
             if status_filtro == "Mostrar completos" and not is_completed: continue
             if status_filtro == "Mostrar incompletos" and is_completed: continue
             if status_filtro == "Favoritos" and not is_favorite: continue
+
+            if qtd_filtro != "Todos":
+                linha_pokemon = self.df_original[self.df_original['Name'] == pname]
+
+                if linha_pokemon.empty:
+                    continue
+
+                qtd_golpes = self.contar_golpes_linha(linha_pokemon.iloc[0])
+
+                if qtd_golpes != int(qtd_filtro):
+                    continue
                 
             prefix = "⭐ " if is_favorite else ""
             prefix += "✅ " if is_completed else ""
@@ -1027,6 +1061,9 @@ class PokemonEditor:
             
         while len(nova_row) < len(self.df_original.columns): nova_row.extend(["0", "0"])
         self.df_original.iloc[idx] = nova_row
+        
+        if hasattr(self, 'atualizar_opcoes_filtro_quantidade'):
+            self.atualizar_opcoes_filtro_quantidade()
 
     def atualizar_contador_golpes(self):
         if not self.pokemon_atual: return
@@ -1034,7 +1071,39 @@ class PokemonEditor:
                     
         if count > 20: self.lbl_aviso_limite.configure(text=f"Total de golpes: {count}/20 ⚠️ EXCESSO", text_color="#FF4040", font=("Roboto", 14, "bold"))
         else: self.lbl_aviso_limite.configure(text=f"Total de golpes: {count}/20", text_color="#569CD6", font=("Roboto", 12, "bold"))
-            
+
+    def contar_golpes_linha(self, row):
+        count = 0
+
+        for i in range(2, len(self.df_original.columns), 2):
+            move = str(row.iloc[i]).strip()
+
+            if move not in ["", "0", "nan", "NOVO_GOLPE"]:
+                count += 1
+
+        return count 
+    
+    def atualizar_opcoes_filtro_quantidade(self):
+        if self.df_original is None:
+            return
+
+        quantidades = set()
+
+        for _, row in self.df_original.iterrows():
+            qtd = self.contar_golpes_linha(row)
+
+            if 1 <= qtd <= 20:
+                quantidades.add(qtd)
+
+        valores = ["Todos"] + [str(qtd) for qtd in sorted(quantidades)]
+
+        valor_atual = self.filter_qtd_golpes_var.get()
+
+        self.combo_filter_qtd.configure(values=valores)
+
+        if valor_atual not in valores:
+            self.filter_qtd_golpes_var.set("Todos")
+    
     def teletransportar_para(self, target_pokemon):
         itens = self.lb_pkmn.get(0, tk.END)
         for i, item in enumerate(itens):
@@ -1686,6 +1755,273 @@ class PokemonEditor:
 
         except Exception as e:
             messagebox.showerror("Erro ao gravar", f"Erro: {e}")
+        
+    # =============== FUNÇÕES PARA MANIPULAR O NOVO ARQUIVO EXCELL ===============
+
+    def obter_ultimo_golpe_linha(self, row):
+        ultimo_move = ""
+        ultimo_lvl = ""
+        maior_lvl = -1
+
+        for i in range(2, len(self.df_original.columns), 2):
+            if i + 1 >= len(self.df_original.columns):
+                continue
+
+            move = str(row.iloc[i]).strip()
+            lvl = str(row.iloc[i + 1]).strip()
+
+            if move in ["", "0", "nan", "NOVO_GOLPE"]:
+                continue
+
+            try:
+                lvl_num = int(lvl)
+            except:
+                lvl_num = 0
+
+            if lvl_num >= maior_lvl:
+                maior_lvl = lvl_num
+                ultimo_move = move
+                ultimo_lvl = lvl
+
+        return ultimo_lvl, ultimo_move
+
+    def obter_id_oficial_por_nome_api(self, nome_api):
+        if self.df_original is None:
+            return None
+
+        for _, row in self.df_original.iterrows():
+            nome_csv = str(row['Name']).strip()
+
+            if self.traduzir_nome_para_api(nome_csv) == nome_api:
+                try:
+                    return int(str(row['ID']).replace(".0", ""))
+                except:
+                    return None
+
+        return None
+    
+    def gerar_ids_familia_export(self, familia_api):
+        ids_oficiais = []
+
+        for nome_api in familia_api:
+            id_oficial = self.obter_id_oficial_por_nome_api(nome_api)
+            if id_oficial is not None:
+                ids_oficiais.append(id_oficial)
+
+        if not ids_oficiais:
+            return {}
+
+        base_id = min(ids_oficiais)
+        mapa = {}
+
+        for i, nome_api in enumerate(familia_api):
+            if i == 0:
+                mapa[nome_api] = str(base_id)
+            else:
+                mapa[nome_api] = f"{base_id},{i}"
+
+        return mapa
+    
+    def obter_familia_para_export(self, nome_api):
+        familia_formas = self.obter_familia_formas_export(nome_api)
+
+        if familia_formas:
+            return familia_formas
+
+        if nome_api in self.cache_familias:
+            return self.aplicar_excecoes_familia(self.cache_familias[nome_api])
+
+        familia = [nome_api]
+
+        try:
+            url_species = f"https://pokeapi.co/api/v2/pokemon-species/{nome_api}"
+            resp_species = requests.get(url_species, timeout=5)
+
+            if resp_species.status_code == 200:
+                evo_chain_url = resp_species.json()['evolution_chain']['url']
+                resp_chain = requests.get(evo_chain_url, timeout=5)
+
+                if resp_chain.status_code == 200:
+                    chain_data = resp_chain.json()['chain']
+                    familia = self.extrair_nomes_cadeia(chain_data)
+                    familia = self.aplicar_excecoes_familia(familia)
+
+                    for membro in familia:
+                        self.cache_familias[membro] = familia
+
+                    try:
+                        with open(self.arquivo_cache_familias, "w", encoding="utf-8") as f:
+                            json.dump(self.cache_familias, f, ensure_ascii=False, indent=2)
+                    except:
+                        pass
+        except:
+            pass
+
+        return familia
+    
+    def obter_familia_formas_export(self, nome_api):
+        familias_formas = {
+            "deoxys": ["deoxys-normal", "deoxys-attack", "deoxys-defense", "deoxys-speed"],
+            "deoxys-normal": ["deoxys-normal", "deoxys-attack", "deoxys-defense", "deoxys-speed"],
+            "deoxys-attack": ["deoxys-normal", "deoxys-attack", "deoxys-defense", "deoxys-speed"],
+            "deoxys-defense": ["deoxys-normal", "deoxys-attack", "deoxys-defense", "deoxys-speed"],
+            "deoxys-speed": ["deoxys-normal", "deoxys-attack", "deoxys-defense", "deoxys-speed"],
+
+            "burmy": ["burmy", "wormadam-plant", "wormadam-sandy", "wormadam-trash", "mothim"],
+            "wormadam": ["burmy", "wormadam-plant", "wormadam-sandy", "wormadam-trash", "mothim"],
+            "wormadam-plant": ["burmy", "wormadam-plant", "wormadam-sandy", "wormadam-trash", "mothim"],
+            "wormadam-sandy": ["burmy", "wormadam-plant", "wormadam-sandy", "wormadam-trash", "mothim"],
+            "wormadam-trash": ["burmy", "wormadam-plant", "wormadam-sandy", "wormadam-trash", "mothim"],
+            "mothim": ["burmy", "wormadam-plant", "wormadam-sandy", "wormadam-trash", "mothim"],
+
+            "rotom": ["rotom", "rotom-heat", "rotom-wash", "rotom-frost", "rotom-fan", "rotom-mow"],
+            "rotom-heat": ["rotom", "rotom-heat", "rotom-wash", "rotom-frost", "rotom-fan", "rotom-mow"],
+            "rotom-wash": ["rotom", "rotom-heat", "rotom-wash", "rotom-frost", "rotom-fan", "rotom-mow"],
+            "rotom-frost": ["rotom", "rotom-heat", "rotom-wash", "rotom-frost", "rotom-fan", "rotom-mow"],
+            "rotom-fan": ["rotom", "rotom-heat", "rotom-wash", "rotom-frost", "rotom-fan", "rotom-mow"],
+            "rotom-mow": ["rotom", "rotom-heat", "rotom-wash", "rotom-frost", "rotom-fan", "rotom-mow"],
+
+            "giratina": ["giratina-altered", "giratina-origin"],
+            "giratina-altered": ["giratina-altered", "giratina-origin"],
+            "giratina-origin": ["giratina-altered", "giratina-origin"],
+
+            "shaymin": ["shaymin-land", "shaymin-sky"],
+            "shaymin-land": ["shaymin-land", "shaymin-sky"],
+            "shaymin-sky": ["shaymin-land", "shaymin-sky"],
+        }
+
+        return familias_formas.get(nome_api)
+    
+    def converter_numero_excel(self, valor):
+        texto = str(valor).strip().replace(",", ".")
+
+        try:
+            numero = float(texto)
+
+            if numero.is_integer():
+                return int(numero)
+
+            return numero
+        except:
+            return valor
+        
+    def exportar_excel_ultimos_golpes(self):
+        if self.df_original is None:
+            return
+
+        self.salvar_em_memoria()
+
+        caminho_excel = filedialog.asksaveasfilename(
+            defaultextension=".xlsx",
+            filetypes=[("Arquivo Excel", "*.xlsx")],
+            title="Salvar tabela de últimos golpes"
+        )
+
+        if not caminho_excel:
+            return
+
+        self.lbl_status.configure(
+            text="📊 Exportando Excel... aguarde, isso pode levar um pouco na primeira vez.",
+            text_color="#ffcc00"
+        )
+        self.root.update_idletasks()
+
+        threading.Thread(
+            target=self.exportar_excel_ultimos_golpes_worker,
+            args=(caminho_excel,),
+            daemon=True
+        ).start()
+    
+    def exportar_excel_ultimos_golpes_worker(self, caminho_excel):
+        try:
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "Ultimos Golpes"
+
+            headers = ["ID", "Pokemon", "Lvl", "Atividade", "Golpe", "Qtd Golpes"]
+            ws.append(headers)
+
+            for cell in ws[1]:
+                cell.font = Font(bold=True)
+                cell.fill = PatternFill("solid", fgColor="D9EAD3")
+                cell.alignment = Alignment(horizontal="center")
+
+            cache_ids_familia = {}
+
+            total = len(self.df_original)
+
+            for indice, (_, row) in enumerate(self.df_original.iterrows(), start=1):
+                if indice % 10 == 0:
+                    self.root.after(
+                        0,
+                        lambda i=indice, t=total: self.lbl_status.configure(
+                            text=f"📊 Exportando Excel... {i}/{t} Pokémon processados",
+                            text_color="#ffcc00"
+                        )
+                    )
+
+                nome_csv = str(row['Name']).strip()
+                nome_api = self.traduzir_nome_para_api(nome_csv)
+
+                familia = self.obter_familia_para_export(nome_api)
+                chave_familia = "|".join(familia)
+
+                if chave_familia not in cache_ids_familia:
+                    cache_ids_familia[chave_familia] = self.gerar_ids_familia_export(familia)
+
+                id_familiar = cache_ids_familia[chave_familia].get(nome_api)
+
+                if not id_familiar:
+                    id_familiar = str(row['ID']).replace(".0", "")
+
+                ultimo_lvl, ultimo_golpe = self.obter_ultimo_golpe_linha(row)
+                qtd_golpes = self.contar_golpes_linha(row)
+
+                ws.append([
+                    self.converter_numero_excel(id_familiar),
+                    nome_csv.capitalize(),
+                    self.converter_numero_excel(ultimo_lvl),
+                    "Ultimo Golpe",
+                    ultimo_golpe,
+                    qtd_golpes
+                ])
+
+            for col, width in {
+                "A": 12,
+                "B": 22,
+                "C": 10,
+                "D": 18,
+                "E": 24,
+                "F": 14
+            }.items():
+                ws.column_dimensions[col].width = width
+
+            thin = Side(style="thin", color="000000")
+
+            for linha in ws.iter_rows():
+                for cell in linha:
+                    cell.border = Border(left=thin, right=thin, top=thin, bottom=thin)
+                    cell.alignment = Alignment(horizontal="center", vertical="center")
+
+            ws.auto_filter.ref = ws.dimensions
+            ws.freeze_panes = "A2"
+
+            wb.save(caminho_excel)
+
+            self.root.after(
+                0,
+                lambda: self.lbl_status.configure(
+                    text=f"📊 Excel exportado com sucesso: {os.path.basename(caminho_excel)}",
+                    text_color="#2E8B57"
+                )
+            )
+
+        except Exception as e:
+            self.root.after(
+                0,
+                lambda erro=e: messagebox.showerror("Erro ao exportar Excel", f"Erro: {erro}")
+            )
+
 
 if __name__ == "__main__":
     root = ctk.CTk()
