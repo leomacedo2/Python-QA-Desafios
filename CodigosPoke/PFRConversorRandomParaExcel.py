@@ -3,7 +3,7 @@ import re
 
 # Caminhos dos arquivos baseados no seu diretório
 arquivo_txt = r"C:\Leo\Emuladores\GBA\wildpokemon.txt"
-arquivo_excel = r"C:\Leo\Emuladores\GBA\wildpokemon_formatado.xlsx"
+arquivo_excel = r"C:\Leo\Emuladores\GBA\wildpokemon_OFICIAL.xlsx"
 
 dados_finais = []
 linha_atual = []

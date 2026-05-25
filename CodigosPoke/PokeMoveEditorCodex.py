@@ -1975,7 +1975,11 @@ class PokemonEditor:
                     id_familiar = str(row['ID']).replace(".0", "")
 
                 ultimo_lvl, ultimo_golpe = self.obter_ultimo_golpe_linha(row)
-                qtd_golpes = self.contar_golpes_linha(row)
+
+                if nome_csv in self.favorites_set:
+                    qtd_golpes = 20
+                else:
+                    qtd_golpes = self.contar_golpes_linha(row)
 
                 ws.append([
                     self.converter_numero_excel(id_familiar),
